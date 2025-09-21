@@ -12,6 +12,9 @@ from app.db import get_db
 from app.models import Job
 from app.schemas import JobFilter
 from app.services.dedupe import simhash_text
+from fastapi import Query
+from app.services.jobs import delete_older_than_hours
+
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -115,8 +118,9 @@ def search_jobs(filter: JobFilter, db: Session = Depends(get_db)):
     q = select(Job).order_by(Job.posted_at.desc())
 
     # Posted within window (defaults to 24h)
-    hrs = filter.posted_within_hours or 24
-    if hrs:
+
+    hrs = getattr(filter, "posted_within_hours", None)
+    if isinstance(hrs, int) and hrs > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hrs)
         q = q.where(Job.posted_at >= cutoff)
 
@@ -155,3 +159,26 @@ def get_job(job_id: UUID, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(status_code=404, detail="job not found")
     return _serialize_job(row)
+@router.delete("/cleanup")
+def cleanup_jobs(ttl_hours: int = Query(48, ge=1, le=24*30), db: Session = Depends(get_db)):
+    """
+    Delete jobs with posted_at older than ttl_hours (default 48).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+    deleted = (
+        db.query(Job)
+          .filter(Job.posted_at < cutoff)
+          .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": int(deleted or 0), "older_than": cutoff.isoformat()}
+
+class CleanupIn(BaseModel):
+  ttl_hours: int = 48
+
+@router.post("/cleanup")
+async def cleanup_jobs(payload: CleanupIn):
+  cutoff = datetime.now(timezone.utc) - timedelta(hours=payload.ttl_hours)
+  deleted = await delete_older_than_hours(cutoff)
+  return {"ok": True, "deleted": deleted, "cutoff": cutoff.isoformat()}
