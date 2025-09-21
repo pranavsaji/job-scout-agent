@@ -1,12 +1,19 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 
+# class JobFilter(BaseModel):
+#     q: Optional[str] = None
+#     remote: Optional[str] = None  # remote|hybrid|onsite
+#     level: Optional[str] = None
+#     location: Optional[str] = None
+#     posted_within_hours: int = 24
 class JobFilter(BaseModel):
     q: Optional[str] = None
-    remote: Optional[str] = None  # remote|hybrid|onsite
+    remote: Optional[str] = None
     level: Optional[str] = None
     location: Optional[str] = None
-    posted_within_hours: int = 24
+    # None/0 means "no cutoff"
+    posted_within_hours: Optional[int] = None
 
 class AnalyzeReq(BaseModel):
     job_title: str

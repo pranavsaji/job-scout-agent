@@ -1,20 +1,21 @@
 # backend/app/routers/jobs.py
 
-from datetime import datetime, timezone, timedelta
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select, text, and_
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Job
 from app.schemas import JobFilter
 from app.services.dedupe import simhash_text
-from fastapi import Query
 from app.services.jobs import delete_older_than_hours
-
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -62,7 +63,7 @@ def _serialize_job(j: Job) -> dict:
         "salary_period": j.salary_period,
         "description_md": j.description_md,
         "description_raw": j.description_raw,
-        "created_at": None,  # add to model if you store it
+        "created_at": (j.created_at.isoformat() if getattr(j, "created_at", None) else None),
     }
 
 
@@ -104,38 +105,77 @@ def ingest_job(payload: JobCreate, db: Session = Depends(get_db)):
     return {"id": str(job.id), "status": "created"}
 
 
+def _parse_date(d: Optional[str]) -> Optional[datetime]:
+    if not d:
+        return None
+    # Accept YYYY-MM-DD or full ISO8601
+    try:
+        if len(d) == 10:
+            # naive date -> start of day UTC
+            return datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+        dt = datetime.fromisoformat(d.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
 @router.post("/search")
-def search_jobs(filter: JobFilter, db: Session = Depends(get_db)):
+def search_jobs(
+    filter: JobFilter,
+    db: Session = Depends(get_db),
+    # query-string overrides (so curl/HTTPie/FE can pass them easily)
+    date_from: Optional[str] = Query(None, description="ISO date/time or YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="ISO date/time or YYYY-MM-DD"),
+    q_limit: Optional[int] = Query(None, ge=1, le=500),
+    q_offset: Optional[int] = Query(None, ge=0),
+):
     """
-    Accepts JobFilter (q, remote, level, location, posted_within_hours).
-    Extra keys like {limit, offset} in the JSON body are ignored by Pydantic,
-    so we pull them manually from request state if present (or default).
+    Accepts a JSON body `JobFilter` (q, remote, level, location, posted_within_hours),
+    plus optional query params:
+      - date_from, date_to: when provided, they override the 24h default and
+        we DO NOT apply `posted_within_hours`.
+      - q_limit, q_offset: override pagination.
+
+    Results are ordered by posted_at DESC.
     """
-    # Defaults that match your UI
-    limit = getattr(filter, "limit", 21) if hasattr(filter, "limit") else 21
-    offset = getattr(filter, "offset", 0) if hasattr(filter, "offset") else 0
+
+    # resolve pagination
+    limit = q_limit if q_limit is not None else getattr(filter, "limit", 21) or 21
+    offset = q_offset if q_offset is not None else getattr(filter, "offset", 0) or 0
+    limit = min(max(limit, 1), 500)
 
     q = select(Job).order_by(Job.posted_at.desc())
 
-    # Posted within window (defaults to 24h)
+    # if a date range is supplied, apply it and **ignore** posted_within_hours
+    df = _parse_date(date_from)
+    dt = _parse_date(date_to)
+    if df and dt:
+        # inclusive range: [df, dt_end]
+        # if dt has only a date part, bump to end-of-day
+        if dt.hour == 0 and dt.minute == 0 and dt.second == 0 and dt.microsecond == 0:
+            dt = dt + timedelta(days=1) - timedelta(microseconds=1)
+        q = q.where(and_(Job.posted_at >= df, Job.posted_at <= dt))
+    elif df:
+        q = q.where(Job.posted_at >= df)
+    elif dt:
+        q = q.where(Job.posted_at <= dt)
+    else:
+        # No date range given: respect posted_within_hours if present
+        hrs = getattr(filter, "posted_within_hours", None)
+        if isinstance(hrs, int) and hrs > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hrs)
+            q = q.where(Job.posted_at >= cutoff)
 
-    hrs = getattr(filter, "posted_within_hours", None)
-    if isinstance(hrs, int) and hrs > 0:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hrs)
-        q = q.where(Job.posted_at >= cutoff)
-
-    if filter.remote:
+    # other filters
+    if getattr(filter, "remote", None):
         q = q.where(Job.remote == filter.remote)
-    if filter.level:
+    if getattr(filter, "level", None):
         q = q.where(Job.level == filter.level)
-    if filter.location:
+    if getattr(filter, "location", None):
         q = q.where(Job.location.ilike(f"%{filter.location}%"))
-    if filter.q:
-        # search in title, company, and description for a nicer UX
+    if getattr(filter, "q", None):
         q = q.where(
-            text(
-                "(title ILIKE :term OR company ILIKE :term OR description_md ILIKE :term)"
-            )
+            text("(title ILIKE :term OR company ILIKE :term OR description_md ILIKE :term)")
         ).params(term=f"%{filter.q}%")
 
     rows = db.execute(q.offset(offset).limit(limit)).scalars().all()
@@ -159,26 +199,48 @@ def get_job(job_id: UUID, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(status_code=404, detail="job not found")
     return _serialize_job(row)
+
+
+# --- Cleanup (manual/admin) ---
+
 @router.delete("/cleanup")
-def cleanup_jobs(ttl_hours: int = Query(48, ge=1, le=24*30), db: Session = Depends(get_db)):
+def cleanup_jobs(ttl_hours: int = Query(48, ge=1, le=24 * 30), db: Session = Depends(get_db)):
     """
     Delete jobs with posted_at older than ttl_hours (default 48).
     """
-    from datetime import datetime, timezone, timedelta
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
     deleted = (
         db.query(Job)
-          .filter(Job.posted_at < cutoff)
-          .delete(synchronize_session=False)
+        .filter(Job.posted_at < cutoff)
+        .delete(synchronize_session=False)
     )
     db.commit()
     return {"deleted": int(deleted or 0), "older_than": cutoff.isoformat()}
 
+
 class CleanupIn(BaseModel):
-  ttl_hours: int = 48
+    ttl_hours: int = 48
+
 
 @router.post("/cleanup")
-async def cleanup_jobs(payload: CleanupIn):
-  cutoff = datetime.now(timezone.utc) - timedelta(hours=payload.ttl_hours)
-  deleted = await delete_older_than_hours(cutoff)
-  return {"ok": True, "deleted": deleted, "cutoff": cutoff.isoformat()}
+async def cleanup_jobs_post(payload: CleanupIn):
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=payload.ttl_hours)
+    deleted = await delete_older_than_hours(cutoff)
+    return {"ok": True, "deleted": deleted, "cutoff": cutoff.isoformat()}
+
+@router.get("/all")
+def list_all_jobs(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(Job)
+          .order_by(Job.posted_at.desc())
+          .offset(offset)
+          .limit(limit)
+          .all()
+    )
+    return [_serialize_job(j) for j in rows]
+
+
