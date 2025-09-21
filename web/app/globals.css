@@ -1,0 +1,10 @@
+/* simple line clamps without installing the Tailwind plugin */
+.clamp-2, .clamp-3, .clamp-4, .clamp-5 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.clamp-2 { -webkit-line-clamp: 2; }
+.clamp-3 { -webkit-line-clamp: 3; }
+.clamp-4 { -webkit-line-clamp: 4; }
+.clamp-5 { -webkit-line-clamp: 5; }

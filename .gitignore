@@ -1,0 +1,146 @@
+# ----------------------------
+# OS / Editors
+# ----------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
+
+# ----------------------------
+# Logs & misc
+# ----------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+coverage/
+*.pid
+*.seed
+*.tgz
+
+# ----------------------------
+# Node / Next.js (frontend)
+# ----------------------------
+web/node_modules/
+web/.next/
+web/.turbo/
+web/out/
+web/.vercel/
+web/.cache/
+web/next-env.d.ts
+web/.eslintcache
+web/.stylelintcache
+
+# Local env files
+web/.env*
+!.env.example
+
+# ----------------------------
+# Python / FastAPI (backend)
+# ----------------------------
+backend/.venv/
+backend/venv/
+backend/env/
+backend/.python-version
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.tox/
+backend/.coverage
+backend/.coverage.*
+backend/htmlcov/
+backend/.ipynb_checkpoints/
+backend/*.egg-info/
+backend/dist/
+backend/build/
+backend/.cache/
+backend/.DS_Store
+
+# Local env files
+backend/.env*
+!.env.example
+
+# Optional runtime dirs
+backend/instance/
+backend/.benchmarks/
+backend/.hypothesis/
+
+# ----------------------------
+# Data & temp (both)
+# ----------------------------
+data/
+tmp/
+temp/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# ----------------------------
+# Docker
+# ----------------------------
+**/.docker/
+docker-data/
+*.tar
+
+# ----------------------------
+# Images / exports (optional)
+# ----------------------------
+*.png~
+*.jpg~
+*.svg~
+
+---
+
+# .gitignore
+
+
+# Node / Next
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.yarn/cache/
+yarn-error.log
+package-lock.json
+pnpm-lock.yaml
+npm-debug.log*
+.DS_Store
+
+# Next build outputs
+.next/
+out/
+dist/
+coverage/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+web/.env.local
+web/.env.*.local
+
+# Logs
+*.log
+logs/
+*.log.*
+*.gz
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+
+# Misc
+*.swp
+*.swo

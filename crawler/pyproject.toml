@@ -1,0 +1,1 @@
+[project]\nname = "jobcrawler"\nversion = "0.1.0"\ndependencies = ["scrapy>=2.11","httpx","python-dateutil","orjson"]\n
